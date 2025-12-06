@@ -243,119 +243,181 @@
             // Xóa dấu [*] để lấy cấu trúc sạch dùng cho việc tìm kiếm substructure
             return smi.replace(/\[\*\]/g, "").replace(/\(\)/g, ""); 
         }
-
-        function generateAndDraw() {
-            if (!rdkitModule) return;
-
-            const hKey = document.getElementById('head').value;
-            const tKey = document.getElementById('tail').value;
-            const s3Key = document.getElementById('sub3').value;
-            const s4Key = document.getElementById('sub4').value;
-            const s5Key = document.getElementById('sub5').value;
-
-            // 1. Tạo chuỗi SMILES đầy đủ bằng cách thay thế chuỗi
-            let finalSmiles = CORES[hKey];
+// --- HÀM 1: Đọc liên kết an toàn hơn (Dùng split thay vì substring cố định) ---
+        function getBondConnections(mol) {
+            const mb = mol.get_molblock();
+            const lines = mb.split("\n");
             
-            // Hàm thay thế giống bản cũ
-            const attach = (base, label, fragCode, fragDict) => {
-                const isH = fragCode === 'a';
-                let fragSmi = fragDict[fragCode].replace(/\[\*\]/g, "");
-                if (fragSmi.startsWith('(') && fragSmi.endsWith(')')) fragSmi = fragSmi.slice(1, -1);
-
-                if (isH) {
-                    // Nếu là H, xóa nhãn
-                    const regexParens = new RegExp(`\\(\\[\\*:${label}\\]\\)`, 'g');
-                    return base.replace(regexParens, "").replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), "");
-                } else {
-                    return base.replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), fragSmi);
-                }
-            };
-
-            finalSmiles = attach(finalSmiles, 9, tKey, TAIL_FRAGS);
-            finalSmiles = attach(finalSmiles, 3, s3Key, SUB_FRAGS);
-            finalSmiles = attach(finalSmiles, 4, s4Key, SUB_FRAGS);
-            finalSmiles = attach(finalSmiles, 5, s5Key, SUB_FRAGS);
-
-            // 2. Xử lý RDKit Mol
-            let mol = rdkitModule.get_mol(finalSmiles);
-            if (!mol) return;
-
-            // 3. Highlight Logic: Tìm vị trí các mảnh trong phân tử tổng
-            // RDKit JS không tự nhớ vị trí sau khi ghép chuỗi, nên ta dùng SubstructMatch
-            // để tìm lại vị trí các mảnh đã ghép.
-            
-            let atomsToHighlight = [];
-            let bondsToHighlight = [];
-            let atomColors = {};
-            let bondColors = {};
-
-            const addHighlight = (fragSmi, color) => {
-                if (!fragSmi || fragSmi === "[*]H") return; // Bỏ qua Hydro
-                
-                const cleanFrag = cleanSmiles(fragSmi);
-                if (!cleanFrag) return;
-
-                const qMol = rdkitModule.get_qmol(cleanFrag);
-// ...
-const matchesJSON = mol.get_substruct_matches(qMol);
-qMol.delete();
-
-// 1. Chuyển đổi từ JSON string array sang mảng JavaScript
-// Output của get_substruct_matches là một vector chứa chuỗi JSON, 
-// nhưng trong JS, nó có thể được xử lý như một mảng các chuỗi JSON.
-const matches = JSON.parse(matchesJSON); // Giả định get_substruct_matches trả về JSON string
-
-// 2. Kiểm tra kích thước bằng `.length`
-if (matches && matches.length > 0) {
-    // Matches là một mảng các đối tượng match (trong đó mỗi object có thuộc tính 'atoms')
-    const matchIdxs = matches[0].atoms; // Lấy mảng chỉ số nguyên tử từ đối tượng match đầu tiên
-    
-    matchIdxs.forEach(idx => {
-        atomsToHighlight.push(idx);
-        atomColors[idx] = color;
-    });
-    // ...
-}
-            };
-
-            // Highlight Tail (Màu Tím)
-            addHighlight(TAIL_FRAGS[tKey], COLORS.tail);
-
-            // Highlight Subs (Màu Cam)
-            addHighlight(SUB_FRAGS[s3Key], COLORS.sub);
-            addHighlight(SUB_FRAGS[s4Key], COLORS.sub);
-            addHighlight(SUB_FRAGS[s5Key], COLORS.sub);
-
-            // Highlight Head (Màu Xanh):
-            // Head khó match chính xác vì nó bị thay thế các điểm nối. 
-            // Chiến thuật: Highlight tất cả những gì CHƯA được highlight (làm nền).
-            // Hoặc: Match cái khung lõi (Core scaffold) đã bỏ các điểm nối.
-            // Đơn giản nhất: Tất cả atom chưa có màu thì cho màu xanh.
-            const numAtoms = mol.get_num_atoms();
-            for (let i = 0; i < numAtoms; i++) {
-                if (!atomColors[i]) {
-                    atomsToHighlight.push(i);
-                    atomColors[i] = COLORS.head;
+            // Tìm dòng Counts Line (thường là dòng có 'V2000' hoặc dòng thứ 4)
+            let countsLineIdx = 3;
+            for(let i=0; i<lines.length; i++){
+                if(lines[i].includes("V2000")){
+                    countsLineIdx = i;
+                    break;
                 }
             }
 
-            // 4. Vẽ lên Canvas với Highlight
-            const canvas = document.getElementById('chemCanvas');
-            const opts = {
-                "atoms": atomsToHighlight,
-                "atomColors": atomColors,
-                "width": canvas.width,
-                "height": canvas.height
-            };
+            const countsLine = lines[countsLineIdx]; 
+            // Dùng split regex để tách số bất kể khoảng trắng nhiều hay ít
+            const tokens = countsLine.trim().split(/\s+/);
+            const numAtoms = parseInt(tokens[0]);
+            const numBonds = parseInt(tokens[1]);
             
-            // Sử dụng hàm vẽ nâng cao của RDKit JS
-            mol.draw_to_canvas_with_highlights(canvas, JSON.stringify(opts));
-
-            // 5. Cập nhật thanh Code Bar (HTML)
-            updateCodeBar(hKey, tKey, s3Key, s4Key, s5Key);
-
-            mol.delete();
+            const bonds = [];
+            const bondBlockStart = countsLineIdx + 1 + numAtoms;
+            
+            for (let i = 0; i < numBonds; i++) {
+                const line = lines[bondBlockStart + i];
+                if (!line) break;
+                
+                const parts = line.trim().split(/\s+/);
+                // V2000: 2 số đầu tiên là chỉ số nguyên tử (1-based index)
+                const a1 = parseInt(parts[0]) - 1;
+                const a2 = parseInt(parts[1]) - 1;
+                
+                bonds.push({ id: i, a1: a1, a2: a2 });
+            }
+            return bonds;
         }
+
+// --- HÀM 2: Vẽ và Tô màu (PHIÊN BẢN CẢI TIẾN - SỬA LỖI TRÙNG LẶP MÀU) ---
+function generateAndDraw() {
+    if (!rdkitModule) return;
+
+    // 1. Đảm bảo COLORS tồn tại (Giữ nguyên định nghĩa này để đảm bảo)
+    const LOC_COLORS = {
+        head: [0.0, 0.4, 0.6],    // Blue
+        tail: [0.5, 0.0, 0.5],    // Purple
+        sub:  [0.9, 0.3, 0.0]     // Orange
+    };
+
+    const hKey = document.getElementById('head').value;
+    const tKey = document.getElementById('tail').value;
+    const s3Key = document.getElementById('sub3').value;
+    const s4Key = document.getElementById('sub4').value;
+    const s5Key = document.getElementById('sub5').value;
+
+    // Helper nối chuỗi (Giữ nguyên)
+    const attach = (base, label, fragCode, fragDict) => {
+        const isH = fragCode === 'a';
+        let fragSmi = fragDict[fragCode].replace(/\[\*\]/g, "");
+        if (fragSmi.startsWith('(') && fragSmi.endsWith(')')) fragSmi = fragSmi.slice(1, -1);
+        if (isH) {
+            const regexParens = new RegExp(`\\(\\[\\*:${label}\\]\\)`, 'g');
+            return base.replace(regexParens, "").replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), "");
+        } else {
+            return base.replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), fragSmi);
+        }
+    };
+
+    let finalSmiles = CORES[hKey];
+    finalSmiles = attach(finalSmiles, 9, tKey, TAIL_FRAGS);
+    finalSmiles = attach(finalSmiles, 3, s3Key, SUB_FRAGS);
+    finalSmiles = attach(finalSmiles, 4, s4Key, SUB_FRAGS);
+    finalSmiles = attach(finalSmiles, 5, s5Key, SUB_FRAGS);
+
+    let mol = rdkitModule.get_mol(finalSmiles);
+    if (!mol) {
+        document.getElementById('status').innerText = "Lỗi: Không thể tạo Mol từ SMILES.";
+        return;
+    }
+
+    let atomsToHighlight = [];
+    let atomColors = {};
+
+    // Hàm Substructure Match CẢI TIẾN
+    const addHighlight = (fragSmi, color, name) => {
+        if (!fragSmi || fragSmi === "[*]H") return;
+        const cleanFrag = cleanSmiles(fragSmi);
+        if (!cleanFrag) return;
+
+        // B1: Tạo Query Mol
+        const qMol = rdkitModule.get_qmol(cleanFrag);
+        const matchesJSON = mol.get_substruct_matches(qMol);
+        qMol.delete();
+
+        const matches = JSON.parse(matchesJSON);
+        if (matches && matches.length > 0) {
+            
+            // DÙNG TẤT CẢ CÁC KHỚP TRÙNG LẶP ĐỂ TÌM TẤT CẢ CÁC NGUYÊN TỬ THUỘC MẢNH NÀY
+            const allMatchIdxs = new Set();
+            matches.forEach(match => {
+                match.atoms.forEach(idx => allMatchIdxs.add(idx));
+            });
+
+            // console.log(`${name} matches:`, Array.from(allMatchIdxs).sort((a,b)=>a-b)); // DEBUG
+            
+            allMatchIdxs.forEach(idx => {
+                // B2: CHỈ TÔ MÀU NẾU NGUYÊN TỬ CHƯA ĐƯỢC TÔ
+                if (atomColors[idx] === undefined) {
+                    atomsToHighlight.push(idx);
+                    atomColors[idx] = color;
+                }
+            });
+        } else {
+             // console.warn(`Cảnh báo: Không tìm thấy khớp cho mảnh ${name} (${cleanFrag}).`); // DEBUG
+        }
+    };
+
+    // 2. TÔ MÀU THEO THỨ TỰ ƯU TIÊN (Nhánh nhỏ ngoài cùng tô trước)
+    
+    // Tail (Purple)
+    addHighlight(TAIL_FRAGS[tKey], LOC_COLORS.tail, `Tail (${tKey})`);
+    
+    // Subs (Orange)
+    addHighlight(SUB_FRAGS[s3Key], LOC_COLORS.sub, `Sub3 (${s3Key})`);
+    addHighlight(SUB_FRAGS[s4Key], LOC_COLORS.sub, `Sub4 (${s4Key})`);
+    addHighlight(SUB_FRAGS[s5Key], LOC_COLORS.sub, `Sub5 (${s5Key})`);
+
+    // 3. TÔ MÀU CORE (HEAD) cho tất cả những gì còn lại
+    const numAtoms = mol.get_num_atoms();
+    for (let i = 0; i < numAtoms; i++) {
+        if (atomColors[i] === undefined) {
+            atomsToHighlight.push(i);
+            atomColors[i] = LOC_COLORS.head;
+        }
+    }
+
+    // --- 4. XỬ LÝ LIÊN KẾT (BONDS) ---
+    // Giữ nguyên logic an toàn đã được cung cấp
+    let bondsToHighlight = [];
+    let bondColors = {};
+    const bondList = getBondConnections(mol);
+    
+    // Helper so sánh 2 mảng màu
+    const isSameColor = (c1, c2) => {
+        if (!c1 || !c2) return false;
+        if (c1.length !== c2.length) return false;
+        // So sánh 3 giá trị float
+        return c1[0] === c2[0] && c1[1] === c2[1] && c1[2] === c2[2];
+    };
+
+    bondList.forEach(bond => {
+        const c1 = atomColors[bond.a1];
+        const c2 = atomColors[bond.a2];
+
+        if (isSameColor(c1, c2)) {
+            bondsToHighlight.push(bond.id);
+            bondColors[bond.id] = c1;
+        }
+    });
+
+    // 5. Vẽ
+    const canvas = document.getElementById('chemCanvas');
+    const opts = {
+        "atoms": atomsToHighlight,
+        "atomColors": atomColors,
+        "bonds": bondsToHighlight,
+        "bondColors": bondColors,
+        "width": canvas.width,
+        "height": canvas.height
+    };
+    
+    mol.draw_to_canvas_with_highlights(canvas, JSON.stringify(opts));
+
+    updateCodeBar(hKey, tKey, s3Key, s4Key, s5Key);
+    mol.delete();
+}
 
         function updateCodeBar(h, t, s3, s4, s5) {
             const bar = document.getElementById('code-bar');
