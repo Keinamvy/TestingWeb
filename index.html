@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual SAR - Cấu trúc phân tử</title>
+    
+    <script src="https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background-color: #f8f9fa;
+        }
+
+        /* --- LEFT PANEL --- */
+        #controls {
+            width: 300px;
+            background: #ffffff;
+            padding: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            border-right: 1px solid #e0e0e0;
+            z-index: 10;
+        }
+
+        h2 { margin-top: 0; color: #333; font-size: 1.1rem; }
+        label { font-weight: 600; font-size: 0.85rem; color: #666; display: block; margin-bottom: 4px;}
+        select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .btn-group { display: flex; gap: 10px; margin-top: 15px; }
+        button {
+            flex: 1; padding: 10px; border: none; border-radius: 4px;
+            cursor: pointer; font-weight: bold; font-size: 0.9rem;
+            transition: 0.2s;
+        }
+        #btn-random { background-color: #6c757d; color: white; }
+        #btn-draw { background-color: #007bff; color: white; }
+        #btn-draw:hover { background-color: #0056b3; }
+
+        /* --- RIGHT PANEL --- */
+        #visualization {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f4f6f9;
+            position: relative;
+            padding: 20px;
+        }
+
+        /* Container cho Canvas */
+        #canvas-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        canvas { width: 600px; height: 400px; }
+
+        /* --- CODE BAR (THANH MÃ MÀU) --- */
+        #code-bar {
+            display: flex;
+            gap: 0; /* Các ô dính liền nhau hoặc cách xa tuỳ ý */
+            font-family: 'Courier New', monospace;
+            font-size: 2rem;
+            font-weight: bold;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+
+        .code-box {
+            padding: 5px 10px;
+            border: 3px solid #ccc;
+            margin-right: -3px; /* Để viền chồng lên nhau cho đẹp */
+            position: relative;
+        }
+
+        /* Màu sắc định nghĩa giống ảnh mẫu */
+        /* Head (Core) - Blue/Teal */
+        .box-head { 
+            border-color: #006699; 
+            color: #000;
+        }
+        
+        /* Tail - Purple */
+        .box-tail { 
+            border-color: #800080; 
+            color: #000;
+        }
+
+        /* Substituents - Orange */
+        .box-sub { 
+            border-color: #e65100; 
+            color: #000;
+        }
+        
+        /* Labels nhỏ bên dưới code box */
+        .box-label {
+            position: absolute;
+            bottom: -20px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 0.6rem;
+            color: #999;
+            font-family: sans-serif;
+            font-weight: normal;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <h2>Cấu hình Phân tử</h2>
+        
+        <div><label>Head (Core - Blue):</label><select id="head"></select></div>
+        <div><label>Tail (Pos 9 - Purple):</label><select id="tail"></select></div>
+        <hr style="width:100%; border:0; border-top:1px solid #eee;">
+        <div><label>Sub 3 (Meta near - Orange):</label><select id="sub3"></select></div>
+        <div><label>Sub 4 (Para - Orange):</label><select id="sub4"></select></div>
+        <div><label>Sub 5 (Meta far - Orange):</label><select id="sub5"></select></div>
+
+        <div class="btn-group">
+            <button id="btn-random">Ngẫu nhiên</button>
+            <button id="btn-draw" disabled>Vẽ & Highlight</button>
+        </div>
+        <div id="status" style="margin-top:auto; font-size:0.8rem; color:#888;">Đang tải RDKit...</div>
+    </div>
+
+    <div id="visualization">
+        <div id="canvas-container">
+            <canvas id="chemCanvas" width="800" height="500"></canvas>
+        </div>
+
+        <div id="code-bar">
+            </div>
+    </div>
+
+    <script>
+        // --- DỮ LIỆU ---
+        const TAIL_FRAGS = {
+            "1a": "[*]CC=C", "1b": "[*]CCCO", "1c": "[*]C=CC", "1d": "[*]C(O)CC",
+            "2a": "[*]Cc1ccccc1", "2b": "[*]Cc1c(C)cccc1", "2c": "[*]Cc1cc(C)ccc1",
+            "2d": "[*]Cc1ccc(C)cc1", "2e": "[*]Cc1c(OC)cccc1", "2f": "[*]Cc1cc(OC)ccc1",
+            "2g": "[*]Cc1ccc(OC)cc1", "2h": "[*]Cc1c(N(C)C)cccc1", "2i": "[*]Cc1cc(N(C)C)ccc1",
+            "2j": "[*]Cc1ccc(N(C)C)cc1",
+        };
+
+        const SUB_FRAGS = {
+            "a": "[*]H", "b": "[*]O", "c": "[*]S", "d": "[*]OC", "e": "[*]OC(F)(F)F",
+            "f": "[*]SC", "g": "[*]N(C)C", "h": "[*]C=O", "i": "[*]C(C)=O", "j": "[*]F",
+            "k": "[*]CF", "l": "[*]C(F)F", "m": "[*]C(F)(F)F", "n": "[*]C",
+        };
+
+        const CORES = {
+            "O": "[*:9]c1ccc2c(C=C(c3cc([*:3])c([*:4])c([*:5])c3)O2)c1",
+            "S": "[*:9]c1ccc2c(C=C(c3cc([*:3])c([*:4])c([*:5])c3)S2)c1",
+            "N": "[*:9]c1ccc2c(C=C(c3cc([*:3])c([*:4])c([*:5])c3)N2)c1",
+            "M": "[*:9]c1ccc2c(C=C(c3cc([*:3])c([*:4])c([*:5])c3)N2C)c1",
+        };
+
+        // --- CẤU HÌNH MÀU SẮC (RDKit dùng mảng [R, G, B]) ---
+        const COLORS = {
+            head: [0.0, 0.4, 0.6],    // Blue #006699
+            tail: [0.5, 0.0, 0.5],    // Purple #800080
+            sub:  [0.9, 0.3, 0.0]     // Orange #e65100
+        };
+
+        let rdkitModule = null;
+
+        window.onload = function() {
+            initUI();
+            window.initRDKitModule().then(function(instance) {
+                rdkitModule = instance;
+                document.getElementById('status').innerText = "Sẵn sàng!";
+                document.getElementById('btn-draw').disabled = false;
+                // Mặc định vẽ giống ảnh mẫu: N + 2h + 3i + 4a + 5j
+                setSelections('N', '2h', 'i', 'a', 'j');
+                generateAndDraw();
+            }).catch(e => console.error(e));
+        };
+
+        function initUI() {
+            populateSelect('head', CORES);
+            populateSelect('tail', TAIL_FRAGS);
+            populateSelect('sub3', SUB_FRAGS);
+            populateSelect('sub4', SUB_FRAGS);
+            populateSelect('sub5', SUB_FRAGS);
+
+            document.getElementById('btn-random').addEventListener('click', randomize);
+            document.getElementById('btn-draw').addEventListener('click', generateAndDraw);
+        }
+
+        function populateSelect(id, obj) {
+            const select = document.getElementById(id);
+            for (const key in obj) {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.innerText = `${key} : ${obj[key].replace(/\[\*:.*?\]/g, '').substring(0, 15)}`;
+                select.appendChild(opt);
+            }
+        }
+
+        function setSelections(h, t, s3, s4, s5) {
+            document.getElementById('head').value = h;
+            document.getElementById('tail').value = t;
+            document.getElementById('sub3').value = s3;
+            document.getElementById('sub4').value = s4;
+            document.getElementById('sub5').value = s5;
+        }
+
+        function randomize() {
+            const rand = (obj) => Object.keys(obj)[Math.floor(Math.random() * Object.keys(obj).length)];
+            setSelections(rand(CORES), rand(TAIL_FRAGS), rand(SUB_FRAGS), rand(SUB_FRAGS), rand(SUB_FRAGS));
+            if (rdkitModule) generateAndDraw();
+        }
+
+        // --- XỬ LÝ LOGIC ---
+
+        function cleanSmiles(smi) {
+            // Xóa dấu [*] để lấy cấu trúc sạch dùng cho việc tìm kiếm substructure
+            return smi.replace(/\[\*\]/g, "").replace(/\(\)/g, ""); 
+        }
+
+        function generateAndDraw() {
+            if (!rdkitModule) return;
+
+            const hKey = document.getElementById('head').value;
+            const tKey = document.getElementById('tail').value;
+            const s3Key = document.getElementById('sub3').value;
+            const s4Key = document.getElementById('sub4').value;
+            const s5Key = document.getElementById('sub5').value;
+
+            // 1. Tạo chuỗi SMILES đầy đủ bằng cách thay thế chuỗi
+            let finalSmiles = CORES[hKey];
+            
+            // Hàm thay thế giống bản cũ
+            const attach = (base, label, fragCode, fragDict) => {
+                const isH = fragCode === 'a';
+                let fragSmi = fragDict[fragCode].replace(/\[\*\]/g, "");
+                if (fragSmi.startsWith('(') && fragSmi.endsWith(')')) fragSmi = fragSmi.slice(1, -1);
+
+                if (isH) {
+                    // Nếu là H, xóa nhãn
+                    const regexParens = new RegExp(`\\(\\[\\*:${label}\\]\\)`, 'g');
+                    return base.replace(regexParens, "").replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), "");
+                } else {
+                    return base.replace(new RegExp(`\\[\\*:${label}\\]`, 'g'), fragSmi);
+                }
+            };
+
+            finalSmiles = attach(finalSmiles, 9, tKey, TAIL_FRAGS);
+            finalSmiles = attach(finalSmiles, 3, s3Key, SUB_FRAGS);
+            finalSmiles = attach(finalSmiles, 4, s4Key, SUB_FRAGS);
+            finalSmiles = attach(finalSmiles, 5, s5Key, SUB_FRAGS);
+
+            // 2. Xử lý RDKit Mol
+            let mol = rdkitModule.get_mol(finalSmiles);
+            if (!mol) return;
+
+            // 3. Highlight Logic: Tìm vị trí các mảnh trong phân tử tổng
+            // RDKit JS không tự nhớ vị trí sau khi ghép chuỗi, nên ta dùng SubstructMatch
+            // để tìm lại vị trí các mảnh đã ghép.
+            
+            let atomsToHighlight = [];
+            let bondsToHighlight = [];
+            let atomColors = {};
+            let bondColors = {};
+
+            const addHighlight = (fragSmi, color) => {
+                if (!fragSmi || fragSmi === "[*]H") return; // Bỏ qua Hydro
+                
+                const cleanFrag = cleanSmiles(fragSmi);
+                if (!cleanFrag) return;
+
+                const qMol = rdkitModule.get_qmol(cleanFrag);
+                const matches = mol.get_substruct_matches(qMol);
+                qMol.delete();
+
+const matches = JSON.parse(matchesJSON); // Giả định get_substruct_matches trả về JSON string
+
+// 2. Kiểm tra kích thước bằng `.length`
+if (matches && matches.length > 0) {
+    // Matches là một mảng các đối tượng match (trong đó mỗi object có thuộc tính 'atoms')
+    const matchIdxs = matches[0].atoms; // Lấy mảng chỉ số nguyên tử từ đối tượng match đầu tiên
+    
+    matchIdxs.forEach(idx => {
+        atomsToHighlight.push(idx);
+        atomColors[idx] = color;
+    });
+    // ...
+}
+            };
+
+            // Highlight Tail (Màu Tím)
+            addHighlight(TAIL_FRAGS[tKey], COLORS.tail);
+
+            // Highlight Subs (Màu Cam)
+            addHighlight(SUB_FRAGS[s3Key], COLORS.sub);
+            addHighlight(SUB_FRAGS[s4Key], COLORS.sub);
+            addHighlight(SUB_FRAGS[s5Key], COLORS.sub);
+
+            // Highlight Head (Màu Xanh):
+            // Head khó match chính xác vì nó bị thay thế các điểm nối. 
+            // Chiến thuật: Highlight tất cả những gì CHƯA được highlight (làm nền).
+            // Hoặc: Match cái khung lõi (Core scaffold) đã bỏ các điểm nối.
+            // Đơn giản nhất: Tất cả atom chưa có màu thì cho màu xanh.
+            const numAtoms = mol.get_num_atoms();
+            for (let i = 0; i < numAtoms; i++) {
+                if (!atomColors[i]) {
+                    atomsToHighlight.push(i);
+                    atomColors[i] = COLORS.head;
+                }
+            }
+
+            // 4. Vẽ lên Canvas với Highlight
+            const canvas = document.getElementById('chemCanvas');
+            const opts = {
+                "atoms": atomsToHighlight,
+                "atomColors": atomColors,
+                "width": canvas.width,
+                "height": canvas.height
+            };
+            
+            // Sử dụng hàm vẽ nâng cao của RDKit JS
+            mol.draw_to_canvas_with_highlights(canvas, JSON.stringify(opts));
+
+            // 5. Cập nhật thanh Code Bar (HTML)
+            updateCodeBar(hKey, tKey, s3Key, s4Key, s5Key);
+
+            mol.delete();
+        }
+
+        function updateCodeBar(h, t, s3, s4, s5) {
+            const bar = document.getElementById('code-bar');
+            bar.innerHTML = '';
+
+            // Helper tạo box
+            const createBox = (text, type, label) => {
+                const div = document.createElement('div');
+                div.className = `code-box box-${type}`;
+                div.innerText = text;
+                
+                // Thêm nhãn nhỏ bên dưới nếu thích (vd: tail, sub...)
+                // const span = document.createElement('span');
+                // span.className = 'box-label';
+                // span.innerText = label;
+                // div.appendChild(span);
+                
+                return div;
+            };
+
+            // Head (Blue)
+            bar.appendChild(createBox(h, 'head', 'Head'));
+            
+            // Tail (Purple) - code là 2h, 1a...
+            bar.appendChild(createBox(t, 'tail', 'Tail'));
+
+            // Sub 3, 4, 5 (Orange) - format: 3i 4a 5j
+            bar.appendChild(createBox("3" + s3, 'sub', 'Meta'));
+            bar.appendChild(createBox("4" + s4, 'sub', 'Para'));
+            bar.appendChild(createBox("5" + s5, 'sub', 'Meta'));
+        }
+
+    </script>
+</body>
+</html>
