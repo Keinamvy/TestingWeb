@@ -296,9 +296,13 @@
                 if (!cleanFrag) return;
 
                 const qMol = rdkitModule.get_qmol(cleanFrag);
-                const matches = mol.get_substruct_matches(qMol);
-                qMol.delete();
+// ...
+const matchesJSON = mol.get_substruct_matches(qMol);
+qMol.delete();
 
+// 1. Chuyển đổi từ JSON string array sang mảng JavaScript
+// Output của get_substruct_matches là một vector chứa chuỗi JSON, 
+// nhưng trong JS, nó có thể được xử lý như một mảng các chuỗi JSON.
 const matches = JSON.parse(matchesJSON); // Giả định get_substruct_matches trả về JSON string
 
 // 2. Kiểm tra kích thước bằng `.length`
